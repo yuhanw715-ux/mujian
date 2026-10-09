@@ -2,6 +2,38 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+extension AccentPalette {
+    var color: Color {
+        switch self {
+        case .lavender: return MiuTheme.lavender
+        case .rose: return Color(red: 0.77, green: 0.47, blue: 0.62)
+        case .sky: return Color(red: 0.39, green: 0.60, blue: 0.79)
+        case .mint: return Color(red: 0.34, green: 0.65, blue: 0.58)
+        }
+    }
+}
+extension ThemeMode {
+    var colorScheme: ColorScheme? {
+        switch self { case .system: return nil; case .light: return .light; case .dark: return .dark }
+    }
+}
+private struct MiuAccentKey: EnvironmentKey { static let defaultValue = MiuTheme.lavender }
+extension EnvironmentValues {
+    var miuAccent: Color { get { self[MiuAccentKey.self] } set { self[MiuAccentKey.self] = newValue } }
+}
+
+struct GlassSurface: ViewModifier {
+    @Environment(\.miuAccent) private var accent
+    @Environment(\.accessibilityReduceTransparency) private var solid
+    var radius: CGFloat = 26
+    func body(content: Content) -> some View {
+        content
+            .background(solid ? AnyShapeStyle(Color(uiColor: .secondarySystemGroupedBackground)) : AnyShapeStyle(.ultraThinMaterial), in: RoundedRectangle(cornerRadius: radius))
+            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(
+                LinearGradient(colors: [.white.opacity(0.38), accent.opacity(0.16), .white.opacity(0.12)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 0.8))
+    }
+}
+
 enum MiuTheme {
     static let lavender = Color(red: 0.52, green: 0.43, blue: 0.70)
     static let rose = Color(red: 0.76, green: 0.43, blue: 0.54)

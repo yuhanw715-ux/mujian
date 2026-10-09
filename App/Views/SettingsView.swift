@@ -6,6 +6,8 @@ struct SettingsView: View {
     @EnvironmentObject private var store: DiaryStore
     @Environment(\.dismiss) private var dismiss
     @State private var appearance = false
+    @State private var themeSettings = false
+    @State private var calendarArt = false
     @State private var drafts = false
     @State private var trash = false
     @State private var fontSize = 18.0
@@ -29,6 +31,10 @@ struct SettingsView: View {
                         }
                     }.padding(.vertical, 10)
                 }
+                Section("月历的模样") {
+                    Button { themeSettings = true } label: { Label("主题与颜色", systemImage: "paintpalette") }
+                    Button { calendarArt = true } label: { Label("月历背景与图片", systemImage: "square.3.layers.3d") }
+                }.disabled(store.isReadOnly)
                 if let loadIssue = store.loadIssue {
                     Section("本地文件需要照看一下") {
                         Text(loadIssue).font(.footnote)
@@ -45,7 +51,7 @@ struct SettingsView: View {
                     Slider(value: $fontSize, in: 14...30, step: 1) { editing in
                         if !editing { do { try store.setFontSize(fontSize) } catch { issue = AlertMessage(text: error.localizedDescription) } }
                     }.accessibilityLabel("阅读字号")
-                } header: { Text("读起来舒服一点") } footer: { Text("月历不显示背景图；默认背景会用于未单独设置的日期。") }
+                } header: { Text("读起来舒服一点") } footer: { Text("单日默认背景用于未单独设置的日期；月历背景在上方单独设置。") }
                 .disabled(store.isReadOnly)
                 Section("我的小抽屉") {
                     Button { drafts = true } label: { Label("草稿箱 · \(store.drafts.count)", systemImage: "pencil.and.outline") }
@@ -61,13 +67,15 @@ struct SettingsView: View {
                 Section {
                     Text("“Miu写的”是日记分类，用来收藏 Miu 的文字；暮笺不会自动生成日记，也不会上传内容。")
                         .font(.footnote).foregroundStyle(.secondary)
-                    HStack { Text("版本"); Spacer(); Text("1.0.0").foregroundStyle(.secondary) }
+                    HStack { Text("版本"); Spacer(); Text("1.1.0").foregroundStyle(.secondary) }
                 }
             }.navigationTitle("暮笺的小设置").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }
         .onAppear { fontSize = store.library.readerFontSize }
         .sheet(isPresented: $appearance) { AppearanceView(day: nil) }
+        .sheet(isPresented: $themeSettings) { ThemeSettingsView() }
+        .sheet(isPresented: $calendarArt) { CalendarArtEditor() }
         .sheet(isPresented: $drafts) { DraftsView() }
         .sheet(isPresented: $trash) { TrashView() }
         .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .json, defaultFilename: exportName) { result in
@@ -182,7 +190,7 @@ struct AppearanceView: View {
                         Text("背景模糊 \(Int(style.blur))").font(.subheadline)
                         Slider(value: $style.blur, in: 0...12).accessibilityLabel("背景模糊")
                     }
-                } header: { Text("背景") } footer: { Text(day == nil ? "用于所有未单独设置背景的日期。月历始终保持简洁。" : "只改变这一天的背景，其他日子会保留自己的模样。") }
+                } header: { Text("背景") } footer: { Text(day == nil ? "用于所有未单独设置背景的日期；与月历背景分别保存。" : "只改变这一天的背景，其他日子会保留自己的模样。") }
                 if let day {
                     Section {
                         Button("这一天跟随默认背景") {

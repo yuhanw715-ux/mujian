@@ -49,11 +49,28 @@ struct BackgroundStyle: Codable, Equatable {
 }
 
 struct DiaryLibrary: Codable, Equatable {
-    var schemaVersion: Int = 1
+    var schemaVersion: Int = 2
     var entries: [DiaryEntry] = []
     var defaultBackground: BackgroundStyle = BackgroundStyle()
     var dayBackgrounds: [String: BackgroundStyle] = [:]
     var readerFontSize: Double = 18
+    var appearance = CalendarAppearance()
+
+    init() {}
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion, entries, defaultBackground, dayBackgrounds, readerFontSize, appearance
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try values.decode(Int.self, forKey: .schemaVersion)
+        guard (1...2).contains(version) else { throw DiaryFailure.message("这个日记文件需要其他版本的暮笺。") }
+        schemaVersion = 2
+        entries = try values.decode([DiaryEntry].self, forKey: .entries)
+        defaultBackground = try values.decode(BackgroundStyle.self, forKey: .defaultBackground)
+        dayBackgrounds = try values.decode([String: BackgroundStyle].self, forKey: .dayBackgrounds)
+        readerFontSize = try values.decode(Double.self, forKey: .readerFontSize)
+        appearance = try values.decodeIfPresent(CalendarAppearance.self, forKey: .appearance) ?? CalendarAppearance()
+    }
     var activeEntries: [DiaryEntry] { entries.filter { $0.deletedAt == nil } }
     func entries(on day: String) -> [DiaryEntry] {
         activeEntries.filter { $0.day == day }.sorted {
@@ -62,13 +79,13 @@ struct DiaryLibrary: Codable, Equatable {
         }
     }
     var referencedImages: Set<String> {
-        Set(([defaultBackground] + Array(dayBackgrounds.values)).compactMap(\.imageName))
+        Set(([defaultBackground] + Array(dayBackgrounds.values)).compactMap(\.imageName)).union(appearance.referencedImages)
     }
 }
 
 struct DiaryBackup: Codable {
     var documentType: String = "app.miu.mujian.backup"
-    var schemaVersion: Int = 1
+    var schemaVersion: Int = 2
     var exportedAt: Date = Date()
     var library: DiaryLibrary
     var drafts: [DiaryDraft]

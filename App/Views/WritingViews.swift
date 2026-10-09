@@ -161,11 +161,10 @@ struct DiaryDatePicker: View {
     }
     var body: some View {
         NavigationStack {
-            VStack {
+            DatePickerDecoration(day: DayKey.make(date)) {
                 DatePicker("存放日期", selection: $date,
                            in: DayKey.date("1900-01-01")!...DayKey.date("2199-12-31")!, displayedComponents: .date)
-                    .datePickerStyle(.graphical).padding()
-                Spacer()
+                    .datePickerStyle(.graphical)
             }.navigationTitle("放在哪一天？").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }

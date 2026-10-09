@@ -126,6 +126,11 @@ final class DiaryStore: ObservableObject {
         next.library.readerFontSize = size
         try commit(next)
     }
+    func setAppearance(_ appearance: CalendarAppearance) throws {
+        var next = state
+        next.library.appearance = appearance
+        try commit(next)
+    }
     func image(named name: String) -> UIImage? {
         guard DiaryRules.safeImageName(name) else { return nil }
         if let cached = imageCache.object(forKey: name as NSString) { return cached }
@@ -133,18 +138,20 @@ final class DiaryStore: ObservableObject {
         imageCache.setObject(image, forKey: name as NSString)
         return image
     }
-    func storeImage(_ data: Data) throws -> String {
+    func storeImage(_ data: Data, preservingAlpha: Bool = false) throws -> String {
         guard data.count <= 40 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               let thumb = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: 1800
-              ] as CFDictionary),
-              let bytes = UIImage(cgImage: thumb).jpegData(compressionQuality: 0.85) else {
+                kCGImageSourceThumbnailMaxPixelSize: preservingAlpha ? 1200 : 1800
+              ] as CFDictionary) else {
             throw DiaryFailure.message("这张图片暂时读不了，请选择一张小于 40 MB 的照片。")
         }
-        let name = UUID().uuidString + ".jpg"
+        let image = UIImage(cgImage: thumb)
+        guard let bytes = preservingAlpha ? image.pngData() : image.jpegData(compressionQuality: 0.85),
+              bytes.count <= 12 * 1024 * 1024 else { throw DiaryFailure.message("这张图片太大，请换一张较小的图片。") }
+        let name = UUID().uuidString + (preservingAlpha ? ".png" : ".jpg")
         try bytes.write(to: imageFolder.appendingPathComponent(name), options: [.atomic, .completeFileProtection])
         return name
     }
@@ -172,6 +179,8 @@ final class DiaryStore: ObservableObject {
             let file = imageFolder.appendingPathComponent(name)
             if let old = try? Data(contentsOf: file), old != bytes {
                 destination = UUID().uuidString + ".jpg"
+                if name.hasSuffix(".png") { destination = UUID().uuidString + ".png" }
+                incoming.appearance.remapImage(name, to: destination)
                 if incoming.defaultBackground.imageName == name { incoming.defaultBackground.imageName = destination }
                 for day in Array(incoming.dayBackgrounds.keys) where incoming.dayBackgrounds[day]?.imageName == name {
                     incoming.dayBackgrounds[day]?.imageName = destination

@@ -18,6 +18,7 @@ enum CoreTests {
         try textTests()
         try diaryTests()
         try backupTests()
+        try appearanceTests()
         print("PASS: \(checks) diary/date/TXT/backup checks. Only synthetic test text was used.")
     }
 
@@ -111,12 +112,73 @@ enum CoreTests {
         try rejects("Missing referenced image must not restore") { _ = try DiaryRules.decodeBackup(DiaryCodec.encode(missing)) }
         var traversal = backup; traversal.images["../library.json"] = Data([1])
         try rejects("Reject path traversal in image names") { _ = try DiaryRules.decodeBackup(DiaryCodec.encode(traversal)) }
-        var future = backup; future.schemaVersion = 2
+        var future = backup; future.schemaVersion = 99
         try rejects("Reject unsupported schema without overwriting") { _ = try DiaryRules.decodeBackup(DiaryCodec.encode(future)) }
         var unrelated = backup; unrelated.documentType = "other.app"
         try rejects("Reject unrelated JSON") { _ = try DiaryRules.decodeBackup(DiaryCodec.encode(unrelated)) }
         var invalidStyle = backup; invalidStyle.library.defaultBackground.veil = -1
         try rejects("Reject invalid image opacity") { _ = try DiaryRules.decodeBackup(DiaryCodec.encode(invalidStyle)) }
         try check(!DiaryRules.safeImageName("../../outside.jpg"), "Reject non-UUID file basename")
+    }
+
+    static func appearanceTests() throws {
+        var oldLibrary = DiaryLibrary()
+        oldLibrary.entries = [DiaryEntry(day: "2026-10-09", author: .me, title: "迁移测试", body: "旧版本的虚构正文\n\n保留空行。")]
+        oldLibrary.entries[0].createdAt = Date(timeIntervalSince1970: 1_790_000_000)
+        oldLibrary.entries[0].updatedAt = Date(timeIntervalSince1970: 1_790_000_100)
+        var object = try JSONSerialization.jsonObject(with: DiaryCodec.encode(oldLibrary)) as! [String: Any]
+        object["schemaVersion"] = 1; object.removeValue(forKey: "appearance")
+        let migrated = try DiaryCodec.decode(DiaryLibrary.self, from: JSONSerialization.data(withJSONObject: object))
+        try check(migrated.entries == oldLibrary.entries, "Migration preserves diaries and timestamps")
+        try check(migrated.schemaVersion == 2 && migrated.appearance == CalendarAppearance(), "Old library gets safe appearance defaults")
+        var oldBackup = try JSONSerialization.jsonObject(with: DiaryCodec.encode(DiaryBackup(library: oldLibrary, drafts: [], images: [:]))) as! [String: Any]
+        oldBackup["library"] = object; oldBackup["schemaVersion"] = 1
+        let restored = try DiaryRules.decodeBackup(JSONSerialization.data(withJSONObject: oldBackup))
+        try check(restored.library.entries == migrated.entries, "Version 1 backup remains restorable")
+        object["schemaVersion"] = 99
+        try rejects("Future local schema must not load as blank library") { _ = try DiaryCodec.decode(DiaryLibrary.self, from: JSONSerialization.data(withJSONObject: object)) }
+
+        let png = UUID().uuidString + ".png"
+        let jpg = UUID().uuidString + ".jpg"
+        try check(DiaryRules.safeImageName(png), "Transparent PNG filenames accepted")
+        try check(!DiaryRules.safeImageName("../" + png), "PNG cannot escape image directory")
+        var art = CalendarAppearance()
+        let a = CalendarSticker(imageName: png)
+        let b = CalendarSticker(imageName: jpg)
+        let c = CalendarSticker(imageName: png)
+        art.stickers = [a, b, c]
+        art.mode = .dark; art.accent = .mint; art.background.imageName = png
+        art.bringToFront(a.id)
+        try check(art.stickers.map(\.id) == [b.id, c.id, a.id], "Bring to front preserves other relative ordering")
+        art.bringToFront(b.id)
+        try check(art.stickers.map(\.id) == [c.id, a.id, b.id], "Most recent bring-to-front action wins")
+        art.bringToFront(b.id); art.bringToFront(UUID())
+        try check(art.stickers.count == 3 && art.stickers.last?.id == b.id, "Repeated or missing IDs never duplicate layers")
+        let replacement = UUID().uuidString + ".png"
+        art.remapImage(png, to: replacement)
+        try check(art.background.imageName == replacement && art.stickers.first?.imageName == replacement, "Image collision remaps background and stickers")
+        try check(art.referencedImages == Set([replacement, jpg]), "All image references included once")
+        var library = DiaryLibrary(); library.appearance = art
+        let appearanceBackup = DiaryBackup(library: library, drafts: [], images: [replacement: Data([1, 2]), jpg: Data([3, 4])])
+        let decoded = try DiaryRules.decodeBackup(DiaryCodec.encode(appearanceBackup))
+        try check(decoded.library.appearance == art, "Theme, positions, opacity and stacking survive backup")
+        var missing = appearanceBackup; missing.images.removeValue(forKey: jpg)
+        try rejects("Missing sticker image prevents partial restore") { _ = try DiaryRules.decodeBackup(DiaryCodec.encode(missing)) }
+        var invalid = art; invalid.stickers[0].width = 2
+        try rejects("Oversized layer must be rejected") { try invalid.validated() }
+        invalid = art; invalid.stickers[0].x = .nan
+        try rejects("NaN image position must be rejected") { try invalid.validated() }
+        var local = DiaryLibrary(); local.appearance.accent = .rose
+        try check(DiaryRules.merging(library, into: local).appearance.accent == .rose, "Merge keeps local theme settings")
+
+        try check(MonthLayout.index(of: DayKey.date("1900-01-01")!) == 0, "First supported month")
+        try check(DayKey.make(MonthLayout.date(at: 3599)) == "2199-12-01", "Last supported month")
+        try check(DayKey.make(MonthLayout.date(at: MonthLayout.index(of: DayKey.date("2026-10-09")!))) == "2026-10-01", "Month index round trip")
+        try check(MonthLayout.snappedOffset(49, stride: 100, maximum: 900) == 0, "Snap backward to closest month")
+        try check(MonthLayout.snappedOffset(51, stride: 100, maximum: 900) == 100, "Snap forward to closest month")
+        try check(MonthLayout.snappedOffset(-50, stride: 100, maximum: 900) == 0, "Snap clamps before first month")
+        try check(MonthLayout.snappedOffset(980, stride: 100, maximum: 900) == 900, "Snap clamps after last month")
+        try check(MonthLayout.opacity(distance: 0, stride: 100) == 1, "Centered month is fully opaque")
+        try check(abs(MonthLayout.opacity(distance: 200, stride: 100) - 0.22) < 0.001, "Adjacent month never becomes invisible")
     }
 }

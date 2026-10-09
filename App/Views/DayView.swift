@@ -27,6 +27,8 @@ struct DayBackground: View {
 
 struct DayView: View {
     @EnvironmentObject private var store: DiaryStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.miuAccent) private var accent
     let day: String
     let namespace: Namespace.ID
     @State private var newEntry: NewEntryContext?
@@ -56,8 +58,15 @@ struct DayView: View {
                         }
                         Text(entries.isEmpty ? "不必写得很特别，今天的你就很好。" : "这一页的你，Miu 好好收着。")
                             .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.top, 8)
-                    }.padding(.horizontal, 22).padding(.bottom, 100).frame(maxWidth: 1000).frame(maxWidth: .infinity)
+                    }.padding(.horizontal, 22).padding(.bottom, 100)
+                        .frame(maxWidth: 1000).frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
+                        .background {
+                            // A separate background hit target; no parent tap recognizer on diary cards or buttons.
+                            Color.clear.contentShape(Rectangle()).onTapGesture { dismiss() }
+                                .accessibilityLabel("返回月历").accessibilityAddTraits(.isButton)
+                        }
                 }
+                .simultaneousGesture(MagnifyGesture().onEnded { if $0.magnification <= 0.82 { dismiss() } })
             }
         }
         .navigationTitle("这一天").navigationBarTitleDisplayMode(.inline)
@@ -71,8 +80,8 @@ struct DayView: View {
                 Spacer()
                 Button { newEntry = NewEntryContext(day: day) } label: {
                     Label("添一篇", systemImage: "plus").font(.headline).padding(.horizontal, 22).frame(height: 54)
-                        .foregroundStyle(.white).background(MiuTheme.lavender, in: Capsule())
-                        .shadow(color: MiuTheme.lavender.opacity(0.25), radius: 12, y: 6)
+                        .foregroundStyle(.white).background(accent, in: Capsule())
+                        .shadow(color: accent.opacity(0.25), radius: 12, y: 6)
                 }.disabled(store.isReadOnly)
             }.padding(.horizontal, 24).padding(.bottom, 8)
         }
