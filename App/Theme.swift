@@ -1,0 +1,78 @@
+import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
+
+enum MiuTheme {
+    static let lavender = Color(red: 0.52, green: 0.43, blue: 0.70)
+    static let rose = Color(red: 0.76, green: 0.43, blue: 0.54)
+    static let page = Color(uiColor: .systemGroupedBackground)
+    static func color(_ author: DiaryAuthor) -> Color { author == .me ? lavender : rose }
+    static func motion(_ reduce: Bool) -> Animation { reduce ? .linear(duration: 0.12) : .spring(response: 0.52, dampingFraction: 0.91) }
+    static func date(_ key: String, template: String = "M月d日 EEEE") -> String {
+        guard let date = DayKey.date(key) else { return key }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = template
+        return formatter.string(from: date)
+    }
+}
+
+struct AuthorBadge: View {
+    let author: DiaryAuthor
+    var body: some View {
+        Label(author.label, systemImage: author == .me ? "pencil.line" : "sparkles")
+            .font(.caption.weight(.medium)).padding(.horizontal, 10).padding(.vertical, 6)
+            .foregroundStyle(MiuTheme.color(author))
+            .background(MiuTheme.color(author).opacity(0.11), in: Capsule())
+    }
+}
+
+struct EmptyPage: View {
+    let symbol: String
+    let title: String
+    let subtitle: String
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: symbol).font(.system(size: 34, weight: .light)).foregroundStyle(MiuTheme.lavender)
+            Text(title).font(.headline)
+            Text(subtitle).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }.padding(32).frame(maxWidth: .infinity)
+    }
+}
+
+struct DiaryFileDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json, .plainText, .data] }
+    var data: Data
+    init(data: Data) { self.data = data }
+    init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+}
+
+enum LocalFiles {
+    static func read(_ url: URL, limit: Int) throws -> Data {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size <= limit else { throw DiaryFailure.message("这个文件太大了，请选择较小的文件。") }
+        let data = try Data(contentsOf: url)
+        guard data.count <= limit else { throw DiaryFailure.message("这个文件太大了，请选择较小的文件。") }
+        return data
+    }
+}
+
+struct AlertMessage: Identifiable { let id = UUID(); let text: String }
+struct ImportFile: Identifiable { let id = UUID(); let name: String; let data: Data }
+struct NewEntryContext: Identifiable { let id = UUID(); var day: String }
+
+extension View {
+    @ViewBuilder
+    func miuZoomSource<ID: Hashable>(_ id: ID, in namespace: Namespace.ID) -> some View {
+        if #available(iOS 18.0, *) { self.matchedTransitionSource(id: id, in: namespace) }
+        else { self }
+    }
+    @ViewBuilder
+    func miuZoomDestination<ID: Hashable>(_ id: ID, in namespace: Namespace.ID, enabled: Bool) -> some View {
+        if #available(iOS 18.0, *), enabled { self.navigationTransition(.zoom(sourceID: id, in: namespace)) }
+        else { self }
+    }
+}

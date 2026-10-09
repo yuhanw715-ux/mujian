@@ -1,0 +1,77 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mujian-ios-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Get project
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Check build environment
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Validate diary, TXT and backup rules
+        run: |
+          set -o pipefail
+          bash scripts/test-core.sh 2>&1 | tee core-tests.log
+
+      - name: Prepare Xcode project
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen generate --spec project.yml
+
+      - name: Compile iPhone application without signing
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Mujian.xcodeproj \
+            -scheme Mujian \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build 2>&1 | tee build-ios.log
+
+      - name: Package IPA for your signing tool
+        run: bash scripts/package-ipa.sh
+
+      - name: Downloadable IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: Mujian-IPA
+          path: |
+            dist/Mujian-unsigned.ipa
+            dist/SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Build log when compilation fails
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Mujian-build-log
+          path: |
+            build-ios.log
+            core-tests.log
+          if-no-files-found: ignore
+          retention-days: 14

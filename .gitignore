@@ -1,0 +1,15 @@
+.DS_Store
+Thumbs.db
+build/
+dist/
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserstate
+*.log
+.env
+*.p12
+*.mobileprovision
+*.ipa
+library.json
+previous.json
+preserved-*.json
