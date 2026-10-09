@@ -20,15 +20,17 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             ZStack {
-                CalendarBackdrop(animatePaws: path.isEmpty && section == 0).ignoresSafeArea()
+                CalendarBackdrop(animatePaws: path.isEmpty).ignoresSafeArea()
                 if section == 0 {
                     VStack(spacing: 0) {
                         if let issue = store.loadIssue {
                             Text(issue).font(.caption).foregroundStyle(.orange).padding(12)
                         }
-                        HStack(spacing: 12) {
-                            legend("我写的", color: MiuTheme.lavender)
-                            legend("Miu写的", color: MiuTheme.rose)
+                        HStack(spacing: 10) {
+                            legend("Miu", color: MiuTheme.rose)
+                            legend("小暮暮 · 当日", color: MiuTheme.lavender)
+                            legend("补写", color: MiuTheme.later)
+                            if store.library.activeEntries.contains(where: { $0.author == .me && $0.writingMoment == nil }) { legend("未标记", color: .secondary) }
                             Spacer()
                             if !store.drafts.isEmpty { Button("草稿 \(store.drafts.count)") { drafts = true }.font(.caption) }
                         }.padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 5)
@@ -36,7 +38,7 @@ struct HomeView: View {
                             path.append(.day(day))
                         }
                     }
-                } else { DiaryListView(search: $search, namespace: navigation) }
+                } else { DiaryListView(search: $search) }
             }
             .navigationTitle(section == 0 ? "暮笺" : "日记").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.hidden, for: .navigationBar)
@@ -244,14 +246,10 @@ private struct CalendarDayCell: View {
     let rowHeight: CGFloat
     let weekend: Bool
     private var isToday: Bool { day == DayKey.make(Date()) }
-    private var markers: [DiaryEntry] {
-        // Show both authors when both exist, even if one wrote several entries.
-        let authors = DiaryAuthor.allCases.compactMap { author in entries.first { $0.author == author } }
-        return authors + Array(entries.filter { entry in !authors.contains { $0.id == entry.id } }.prefix(max(0, 2 - authors.count)))
-    }
+    private var authors: [DiaryAuthor] { DiaryAuthor.calendarOrder.filter { author in entries.contains { $0.author == author } } }
     var body: some View {
         let compact = rowHeight < 100
-        let diameter = min(34, max(20, rowHeight - 4))
+        let diameter = min(34, max(20, rowHeight - (rowHeight >= 56 ? 28 : 10)))
         VStack(spacing: compact ? 2 : 4) {
             Text(String(Int(day.suffix(2)) ?? 1)).font(.system(size: compact ? 16 : 21, weight: isToday ? .semibold : .regular, design: .rounded))
                 .foregroundStyle(isToday ? Color.primary : weekend ? Color.secondary : Color.primary)
@@ -263,32 +261,38 @@ private struct CalendarDayCell: View {
                             .overlay(Circle().strokeBorder(LinearGradient(colors: [.white.opacity(0.75), accent.opacity(0.45), .white.opacity(0.22)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1))
                     }
                 }.padding(.top, compact ? 1 : 7)
-            if compact {
-                if rowHeight >= 50 {
-                    HStack(spacing: 2) {
-                        ForEach(markers) { entry in
-                            Text(entry.author.shortLabel).font(.system(size: 8, weight: .medium))
-                                .padding(.horizontal, 3).padding(.vertical, 2)
-                                .foregroundStyle(MiuTheme.color(entry.author))
-                                .background(MiuTheme.color(entry.author).opacity(0.15), in: Capsule())
-                        }
-                        if entries.count > 2 { Text("+\(entries.count - 2)").font(.system(size: 7)).foregroundStyle(.secondary) }
-                    }.lineLimit(1).minimumScaleFactor(0.7)
-                } else if rowHeight >= 34 {
-                    HStack(spacing: 3) { ForEach(markers) { Circle().fill(MiuTheme.color($0.author)).frame(width: 3, height: 3) } }
+            if rowHeight >= 56 {
+                VStack(spacing: 1) {
+                    ForEach(authors) { author in
+                        HStack(spacing: 2) {
+                            markerDots(author)
+                            Text(author.shortLabel).font(.system(size: compact ? 8 : 10, weight: .medium)).foregroundStyle(.primary)
+                        }.lineLimit(1).padding(.horizontal, 3).frame(height: compact ? 11 : 16)
+                            .background(markerColor(author).opacity(0.16), in: Capsule())
+                    }
                 }
-            } else {
-                ForEach(markers) { entry in
-                    Text(entry.author.label).font(.system(size: 9, weight: .medium)).lineLimit(1).minimumScaleFactor(0.7)
-                        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 3).padding(.vertical, 3)
-                        .foregroundStyle(MiuTheme.color(entry.author))
-                        .background(MiuTheme.color(entry.author).opacity(0.14), in: RoundedRectangle(cornerRadius: 5))
-                }
-                if entries.count > 2 { Text("+\(entries.count - 2)").font(.system(size: 9)).foregroundStyle(.secondary) }
+                if entries.count > 2 && rowHeight >= 82 { Text("+\(entries.count - 2)").font(.system(size: 8)).foregroundStyle(.secondary) }
+            } else if rowHeight >= 34 {
+                HStack(spacing: 4) { ForEach(authors) { markerDots($0) } }
             }
             Spacer(minLength: 0)
         }.padding(.horizontal, 2).contentShape(Rectangle()).accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(MiuTheme.date(day))，\(entries.count) 篇日记\(isToday ? "，今天" : "")")
+            .accessibilityLabel("\(MiuTheme.date(day))，\(entries.count) 篇日记\(isToday ? "，今天" : "")，" + entries.map { "\($0.author.shortLabel) \($0.momentLabel ?? "")" }.joined(separator: "，"))
+    }
+    @ViewBuilder private func markerDots(_ author: DiaryAuthor) -> some View {
+        if author == .miu { Circle().fill(MiuTheme.rose).frame(width: 3, height: 3) }
+        else {
+            ForEach(WritingMoment.allCases.filter { moment in entries.contains { $0.author == .me && $0.writingMoment == moment } }) { moment in
+                Circle().fill(MiuTheme.color(.me, moment: moment)).frame(width: 3, height: 3)
+            }
+            if entries.contains(where: { $0.author == .me && $0.writingMoment == nil }) { Circle().strokeBorder(Color.secondary, lineWidth: 0.8).frame(width: 3, height: 3) }
+        }
+    }
+    private func markerColor(_ author: DiaryAuthor) -> Color {
+        if author == .miu { return MiuTheme.rose }
+        let mine = entries.filter { $0.author == .me }
+        guard let first = mine.first, mine.allSatisfy({ $0.writingMoment == first.writingMoment }) else { return .secondary }
+        return MiuTheme.color(first)
     }
 }
 

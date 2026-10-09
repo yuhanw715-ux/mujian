@@ -21,6 +21,8 @@ enum CoreTests {
         try appearanceTests()
         try navigationTests()
         try importTests()
+        try presentationTests()
+        try writingMomentTests()
         print("PASS: \(checks) diary/date/TXT/backup checks. Only synthetic test text was used.")
     }
 
@@ -132,7 +134,7 @@ enum CoreTests {
         object["schemaVersion"] = 1; object.removeValue(forKey: "appearance")
         let migrated = try DiaryCodec.decode(DiaryLibrary.self, from: JSONSerialization.data(withJSONObject: object))
         try check(migrated.entries == oldLibrary.entries, "Migration preserves diaries and timestamps")
-        try check(migrated.schemaVersion == 2 && migrated.appearance == CalendarAppearance(), "Old library gets safe appearance defaults")
+        try check(migrated.schemaVersion == 3 && migrated.appearance == CalendarAppearance(), "Old library gets safe appearance defaults")
         var oldBackup = try JSONSerialization.jsonObject(with: DiaryCodec.encode(DiaryBackup(library: oldLibrary, drafts: [], images: [:]))) as! [String: Any]
         oldBackup["library"] = object; oldBackup["schemaVersion"] = 1
         let restored = try DiaryRules.decodeBackup(JSONSerialization.data(withJSONObject: oldBackup))
@@ -182,6 +184,79 @@ enum CoreTests {
         try check(MonthLayout.snappedOffset(980, stride: 100, maximum: 900) == 900, "Snap clamps after last month")
         try check(MonthLayout.opacity(distance: 0, stride: 100) == 1, "Centered month is fully opaque")
         try check(abs(MonthLayout.opacity(distance: 200, stride: 100) - 0.22) < 0.001, "Adjacent month never becomes invisible")
+    }
+
+    static func presentationTests() throws {
+        let secretTitle = "SYNTHETIC_PRIVATE_TITLE_907"
+        let secretBody = "SYNTHETIC_PRIVATE_BODY_681"
+        let miu = DiaryEntry(day: "2026-10-09", author: .miu, title: secretTitle, body: secretBody)
+        try check(!miu.overviewTitle.contains(secretTitle), "Miu title does not leak into overview")
+        try check(!miu.overviewExcerpt.contains(secretBody), "Miu excerpt does not leak into overview")
+        try check(!miu.matchesOverviewSearch(secretTitle), "Hidden Miu title is not searchable from overview")
+        try check(!miu.matchesOverviewSearch(secretBody), "Hidden Miu body is not searchable from overview")
+        try check(miu.matchesOverviewSearch("2026.10.09"), "Miu remains findable by dotted date")
+        try check(miu.matchesOverviewSearch("2026/10/09"), "Slashed dates are searchable")
+        try check(miu.matchesOverviewSearch("miu"), "Miu remains findable by author")
+        try check(miu.matchesOverviewSearch("  \n"), "Whitespace-only search shows the normal collection")
+        try check(miu.body == secretBody && miu.displayTitle == secretTitle, "Sealed presentation preserves full text for deliberate reading")
+        var mine = DiaryEntry(day: "2026-10-09", author: .me, title: "虚构雨天", body: "虚构的散步正文", writingMoment: .later)
+        try check(mine.overviewTitle == "虚构雨天" && mine.overviewExcerpt == "虚构的散步正文", "Own previews remain readable")
+        try check(mine.matchesOverviewSearch("散步") && mine.matchesOverviewSearch("后来补写"), "Own body and writing labels are searchable")
+        try check(DiaryAuthor.me.shortLabel == "小暮暮" && DiaryAuthor.me.rawValue == "me", "Display rename keeps existing stored author identity")
+        try check(DiaryAuthor.calendarOrder == [.miu, .me], "Calendar labels put Miu above 小暮暮")
+        var otherDay = mine; otherDay.id = UUID(); otherDay.day = "2026-10-08"
+        var extraMiu = miu; extraMiu.id = UUID()
+        var deleted = miu; deleted.id = UUID(); deleted.day = "2026-10-07"; deleted.deletedAt = Date()
+        let groups = DiaryDayGroup.grouped([miu, mine, otherDay, extraMiu, deleted])
+        try check(groups.map(\.day) == ["2026-10-09", "2026-10-08"], "Date groups sort recent-first and exclude trash")
+        try check(groups[0].miu.count == 2 && groups[0].mine.count == 1, "Counts include all entries on a day, not just two")
+        try check(groups.filter(\.hasDifferentCounts).count == 2, "Equal overall totals can still have two mismatched dates")
+        try check(!groups[1].matches(author: .miu, query: "", differencesOnly: false), "Author filter excludes dates without that author")
+        try check(!groups[0].matches(author: .all, query: secretBody, differencesOnly: false), "Grouped search cannot reveal hidden Miu body")
+        try check(groups[0].matches(author: .me, query: "散步", differencesOnly: true), "Author, text and differing-count filters combine")
+        let balanced = DiaryDayGroup.grouped([miu, mine])[0]
+        try check(!balanced.hasDifferentCounts && !balanced.matches(author: .all, query: "", differencesOnly: true), "Balanced days are excluded only when requested")
+        mine.writingMoment = nil
+        try check(mine.momentLabel == "未标记" && miu.momentLabel == nil, "Legacy unknown labels are explicit and Miu has no writing category")
+    }
+
+    static func writingMomentTests() throws {
+        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        var entry = DiaryEntry(day: "2026-10-08", author: .me, title: "迁移用虚构标题", body: "迁移用虚构正文\n\n完整保留。", source: .txt, originalFilename: "2026-10-08_test.txt", createdAt: date, updatedAt: date)
+        // Emulate actual 1.1.1 bytes, not a new model with a guessed classification.
+        var oldEntry = try JSONSerialization.jsonObject(with: DiaryCodec.encode(entry)) as! [String: Any]
+        oldEntry.removeValue(forKey: "writingMoment")
+        var oldLibrary = try JSONSerialization.jsonObject(with: DiaryCodec.encode(DiaryLibrary())) as! [String: Any]
+        oldLibrary["schemaVersion"] = 2; oldLibrary["entries"] = [oldEntry]
+        let migrated = try DiaryCodec.decode(DiaryLibrary.self, from: JSONSerialization.data(withJSONObject: oldLibrary))
+        try check(migrated.schemaVersion == 3, "Version 2 library migrates to version 3")
+        try check(migrated.entries[0] == entry, "Legacy migration preserves IDs, author, dates, title, body, source and timestamps")
+        try check(migrated.entries[0].writingMoment == nil, "Import date does not invent an old writing category")
+        entry.writingMoment = .onDay
+        let marked = try DiaryCodec.decode(DiaryEntry.self, from: DiaryCodec.encode(entry))
+        try check(marked.writingMoment == .onDay && marked.body == entry.body, "On-day category survives serialization without changing body")
+        let draft = DiaryDraft.editing(marked)
+        try check(draft.writingMoment == .onDay && draft.entryID == marked.id, "Editing preserves writing category and original identity")
+        var laterDraft = draft; laterDraft.writingMoment = .later
+        let restoredDraft = try DiaryCodec.decode(DiaryDraft.self, from: DiaryCodec.encode(laterDraft))
+        try check(restoredDraft.writingMoment == .later && restoredDraft.body == marked.body, "Draft autosave retains later-writing selection")
+        var lib = DiaryLibrary(); lib.entries = [marked]
+        let backup = DiaryBackup(library: lib, drafts: [laterDraft], images: [:])
+        let restored = try DiaryRules.decodeBackup(DiaryCodec.encode(backup))
+        try check(restored.schemaVersion == 3 && restored.library.entries[0].writingMoment == .onDay && restored.drafts[0].writingMoment == .later, "Full backup preserves both entry and draft labels")
+        var oldDraft = try JSONSerialization.jsonObject(with: DiaryCodec.encode(draft)) as! [String: Any]
+        oldDraft.removeValue(forKey: "writingMoment")
+        var oldBackup = try JSONSerialization.jsonObject(with: DiaryCodec.encode(backup)) as! [String: Any]
+        oldBackup["schemaVersion"] = 2; oldBackup["library"] = oldLibrary; oldBackup["drafts"] = [oldDraft]
+        let legacy = try DiaryRules.decodeBackup(JSONSerialization.data(withJSONObject: oldBackup))
+        try check(legacy.drafts[0].writingMoment == nil && legacy.library.entries[0].body == entry.body, "Old backup restores diaries and unmarked drafts")
+        var newer = marked; newer.writingMoment = .later; newer.updatedAt = date.addingTimeInterval(1)
+        var incoming = DiaryLibrary(); incoming.entries = [newer]
+        let merged = DiaryRules.merging(incoming, into: lib)
+        try check(merged.entries[0].writingMoment == .later && merged.entries[0].id == marked.id, "Newer writing label merges without duplicating diary")
+        try check(DiaryRules.merging(lib, into: merged).entries[0].writingMoment == .later, "Old backup cannot reset a newer writing label")
+        oldEntry["writingMoment"] = "unrecognized-value"
+        try rejects("Unrecognized persisted writing category fails rather than silently changing it") { _ = try DiaryCodec.decode(DiaryEntry.self, from: JSONSerialization.data(withJSONObject: oldEntry)) }
     }
 
     static func navigationTests() throws {

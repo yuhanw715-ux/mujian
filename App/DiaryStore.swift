@@ -83,7 +83,8 @@ final class DiaryStore: ObservableObject {
         let existing = draft.entryID.flatMap { id in next.library.entries.first { $0.id == id } }
         guard existing?.deletedAt == nil else { throw DiaryFailure.message("原日记在回收站中，请先恢复它。") }
         var entry = DiaryEntry(day: draft.day, author: draft.author, title: draft.title, body: draft.body,
-                               source: draft.source, originalFilename: draft.originalFilename)
+                               source: draft.source, originalFilename: draft.originalFilename,
+                               writingMoment: draft.author == .me ? draft.writingMoment : nil)
         if let existing { entry.id = existing.id; entry.createdAt = existing.createdAt }
         entry.updatedAt = Date()
         try DiaryRules.validateEntry(entry)
@@ -92,6 +93,18 @@ final class DiaryStore: ObservableObject {
         next.drafts.removeAll { $0.id == draft.id || $0.entryID == entry.id }
         try commit(next)
         return entry.id
+    }
+    func setWritingMoment(_ id: UUID, to moment: WritingMoment) throws {
+        var next = state
+        guard let index = next.library.entries.firstIndex(where: { $0.id == id && $0.author == .me }) else { return }
+        next.library.entries[index].writingMoment = moment
+        next.library.entries[index].updatedAt = Date()
+        // An older saved draft must not undo a label changed from the reading menu.
+        for draftIndex in next.drafts.indices where next.drafts[draftIndex].entryID == id {
+            next.drafts[draftIndex].writingMoment = moment
+            next.drafts[draftIndex].updatedAt = Date()
+        }
+        try commit(next)
     }
     func setDeleted(_ id: UUID, deleted: Bool) throws {
         var next = state

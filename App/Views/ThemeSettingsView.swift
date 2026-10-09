@@ -15,7 +15,7 @@ struct ThemeSettingsView: View {
                         VStack(spacing: 12) {
                             Image(systemName: draft.mode == .light ? "sun.max" : "moon.stars").font(.largeTitle)
                             Text("让暮笺，换一种心情。").font(.headline)
-                            Text("我写的 · Miu写的").font(.caption).foregroundStyle(.secondary)
+                            Text("小暮暮写的 · Miu写的").font(.caption).foregroundStyle(.secondary)
                         }.padding(24).modifier(GlassSurface()).padding(24)
                     }.frame(height: 230).clipShape(RoundedRectangle(cornerRadius: 22)).listRowInsets(EdgeInsets())
                 }
@@ -39,9 +39,9 @@ struct ThemeSettingsView: View {
                 }
                 Section {
                     Toggle("暗夜的小猫爪", isOn: $draft.nightPaws)
-                } header: { Text("小装饰") } footer: { Text("猫爪只在暗夜月历的侧边轻轻向上浮动。开启“减弱动态效果”时会静止，也可以在这里关闭。") }
+                } header: { Text("小装饰") } footer: { Text("猫爪在暗夜月历和日记栏的侧边轻轻向上浮动。开启“减弱动态效果”时会静止，也可以在这里关闭。") }
                 Section {
-                    Text("紫色的“我写的”和粉色的“Miu写的”仍用于区分作者；强调色改变按钮、玻璃选中态和装饰。")
+                    Text("小暮暮当日写下的用暮紫，后来补写的用青色，尚未选择的用灰色；Miu 用粉色。强调色只改变按钮、选中态和装饰，不改变日记标记的含义。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }.navigationTitle("主题与颜色").navigationBarTitleDisplayMode(.inline)

@@ -52,7 +52,9 @@ struct DayView: View {
                         }
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: geometry.size.width > 650 ? 300 : max(240, geometry.size.width - 48)), spacing: 18)], alignment: .leading, spacing: 18) {
                             ForEach(entries) { entry in
-                                NavigationLink(value: DiaryRoute.entry(entry.id)) { DiaryCard(entry: entry) }
+                                NavigationLink(value: DiaryRoute.entry(entry.id)) {
+                                    DiaryCard(entry: entry, ordinal: entries.filter { $0.author == entry.author }.firstIndex(where: { $0.id == entry.id }).map { $0 + 1 })
+                                }
                                     .buttonStyle(DiaryPressStyle()).miuZoomSource(entry.id, in: namespace)
                             }
                         }
@@ -99,21 +101,28 @@ private struct DiaryPressStyle: ButtonStyle {
 
 struct DiaryCard: View {
     let entry: DiaryEntry
+    var ordinal: Int? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack {
-                AuthorBadge(author: entry.author)
+                AuthorBadge(author: entry.author, moment: entry.writingMoment)
                 Spacer()
                 Text(entry.source == .txt ? "TXT 收藏" : "写在暮笺").font(.caption2).foregroundStyle(.secondary)
             }
-            Text(entry.displayTitle).font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
-            Text(entry.excerpt).font(.subheadline).lineSpacing(6).foregroundStyle(.secondary)
-                .lineLimit(4).frame(maxWidth: .infinity, alignment: .leading)
+            Text(entry.author == .miu ? "Miu 留下的第 \(ordinal ?? 1) 页" : entry.overviewTitle)
+                .font(.title3.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
+            if entry.author == .miu {
+                SealedDiaryPreview()
+            } else {
+                WritingMomentBadge(moment: entry.writingMoment)
+                Text(entry.overviewExcerpt).font(.subheadline).lineSpacing(6).foregroundStyle(.secondary)
+                    .lineLimit(4).frame(maxWidth: .infinity, alignment: .leading)
+            }
             HStack {
-                Text("轻轻翻开").font(.caption)
+                Text(entry.author == .miu ? "点开，读 Miu 的全文" : "轻轻翻开").font(.caption)
                 Spacer()
                 Image(systemName: "arrow.up.right").font(.caption.weight(.medium))
-            }.foregroundStyle(MiuTheme.color(entry.author))
+            }.foregroundStyle(.primary)
         }.padding(22).frame(maxWidth: .infinity, alignment: .leading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 26))
             .overlay(RoundedRectangle(cornerRadius: 26).stroke(.white.opacity(0.3), lineWidth: 1))
@@ -137,7 +146,8 @@ struct ReaderView: View {
                     DayBackground(day: entry.day)
                     ScrollView {
                         VStack(alignment: .leading, spacing: 22) {
-                            HStack { AuthorBadge(author: entry.author); Spacer(); Text(MiuTheme.date(entry.day, template: "yyyy.MM.dd")).font(.caption).foregroundStyle(.secondary) }
+                            HStack { AuthorBadge(author: entry.author, moment: entry.writingMoment); Spacer(); Text(MiuTheme.date(entry.day, template: "yyyy.MM.dd")).font(.caption).foregroundStyle(.secondary) }
+                            if entry.author == .me { WritingMomentBadge(moment: entry.writingMoment) }
                             Text(entry.displayTitle).font(.system(size: 29, weight: .bold, design: .rounded)).textSelection(.enabled)
                             Divider()
                             Text(verbatim: entry.body).font(.system(size: store.library.readerFontSize))
@@ -153,6 +163,16 @@ struct ReaderView: View {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button { editing = store.draft(for: entry) } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("编辑日记")
                         Menu {
+                            if entry.author == .me {
+                                Section("这篇是哪时写下的？") {
+                                    ForEach(WritingMoment.allCases) { moment in
+                                        Button(moment.label, systemImage: entry.writingMoment == moment ? "checkmark" : moment.symbol) {
+                                            do { try store.setWritingMoment(entry.id, to: moment) }
+                                            catch { issue = AlertMessage(text: error.localizedDescription) }
+                                        }
+                                    }
+                                }
+                            }
                             Button("导出 TXT", systemImage: "square.and.arrow.up") {
                                 exportName = "\(entry.day)_\(entry.author.shortLabel).txt"
                                 exportDocument = DiaryFileDocument(data: Data(entry.body.utf8)); exporting = true

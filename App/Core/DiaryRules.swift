@@ -109,7 +109,7 @@ enum DiaryRules {
               style.imageName.map(safeImageName) ?? true else { throw DiaryFailure.message("背景设置格式不正确。") }
     }
     static func validateLibrary(_ library: DiaryLibrary) throws {
-        guard (1...2).contains(library.schemaVersion) else { throw DiaryFailure.message("这个备份需要其他版本的暮笺，请保留原文件。") }
+        guard (1...3).contains(library.schemaVersion) else { throw DiaryFailure.message("这个备份需要其他版本的暮笺，请保留原文件。") }
         guard Set(library.entries.map(\.id)).count == library.entries.count else { throw DiaryFailure.message("文件含有重复的日记编号。") }
         for entry in library.entries { try validateEntry(entry) }
         try validateStyle(library.defaultBackground)
@@ -123,7 +123,7 @@ enum DiaryRules {
     static func decodeBackup(_ data: Data) throws -> DiaryBackup {
         guard data.count <= maxBackupBytes else { throw DiaryFailure.message("备份超过 150 MB，暂时无法一次读取。") }
         let backup = try DiaryCodec.decode(DiaryBackup.self, from: data)
-        guard backup.documentType == "app.miu.mujian.backup", (1...2).contains(backup.schemaVersion) else { throw DiaryFailure.message("这不是暮笺支持的备份文件。") }
+        guard backup.documentType == "app.miu.mujian.backup", (1...3).contains(backup.schemaVersion) else { throw DiaryFailure.message("这不是暮笺支持的备份文件。") }
         try validateLibrary(backup.library)
         guard Set(backup.drafts.map(\.id)).count == backup.drafts.count else { throw DiaryFailure.message("备份中的草稿编号重复。") }
         for draft in backup.drafts {

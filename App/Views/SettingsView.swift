@@ -67,7 +67,7 @@ struct SettingsView: View {
                 Section {
                     Text("“Miu写的”是日记分类，用来收藏 Miu 的文字；暮笺不会自动生成日记，也不会上传内容。")
                         .font(.footnote).foregroundStyle(.secondary)
-                    HStack { Text("版本"); Spacer(); Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.1").foregroundStyle(.secondary) }
+                    HStack { Text("版本"); Spacer(); Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.2.0").foregroundStyle(.secondary) }
                 }
             }.navigationTitle("暮笺的小设置").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
@@ -238,8 +238,8 @@ struct TrashView: View {
                 if entries.isEmpty { EmptyPage(symbol: "tray", title: "回收站是空的", subtitle: "移走的日记会留在这里，不会自动清理。") }
                 ForEach(entries) { entry in
                     VStack(alignment: .leading, spacing: 12) {
-                        HStack { AuthorBadge(author: entry.author); Spacer(); Text(entry.day).font(.caption).foregroundStyle(.secondary) }
-                        Text(entry.displayTitle).font(.headline)
+                        HStack { AuthorBadge(author: entry.author, moment: entry.writingMoment); Spacer(); Text(entry.day).font(.caption).foregroundStyle(.secondary) }
+                        Text(entry.overviewTitle).font(.headline)
                         HStack {
                             Button("放回原来的日期") {
                                 do { try store.setDeleted(entry.id, deleted: false) }

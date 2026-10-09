@@ -37,8 +37,14 @@ struct GlassSurface: ViewModifier {
 enum MiuTheme {
     static let lavender = Color(red: 0.52, green: 0.43, blue: 0.70)
     static let rose = Color(red: 0.76, green: 0.43, blue: 0.54)
+    static let later = Color(uiColor: .systemTeal)
     static let page = Color(uiColor: .systemGroupedBackground)
     static func color(_ author: DiaryAuthor) -> Color { author == .me ? lavender : rose }
+    static func color(_ author: DiaryAuthor, moment: WritingMoment?) -> Color {
+        guard author == .me else { return rose }
+        switch moment { case .onDay: return lavender; case .later: return later; case nil: return .secondary }
+    }
+    static func color(_ entry: DiaryEntry) -> Color { color(entry.author, moment: entry.writingMoment) }
     static func motion(_ reduce: Bool) -> Animation { reduce ? .linear(duration: 0.12) : .spring(response: 0.52, dampingFraction: 0.91) }
     static func date(_ key: String, template: String = "M月d日 EEEE") -> String {
         guard let date = DayKey.date(key) else { return key }
@@ -51,11 +57,58 @@ enum MiuTheme {
 
 struct AuthorBadge: View {
     let author: DiaryAuthor
+    var moment: WritingMoment? = nil
     var body: some View {
         Label(author.label, systemImage: author == .me ? "pencil.line" : "sparkles")
             .font(.caption.weight(.medium)).padding(.horizontal, 10).padding(.vertical, 6)
-            .foregroundStyle(MiuTheme.color(author))
-            .background(MiuTheme.color(author).opacity(0.11), in: Capsule())
+            .foregroundStyle(.primary)
+            .background(MiuTheme.color(author, moment: moment).opacity(0.15), in: Capsule())
+    }
+}
+
+struct WritingMomentBadge: View {
+    let moment: WritingMoment?
+    var body: some View {
+        Label(moment?.label ?? "未标记", systemImage: moment?.symbol ?? "circle.dashed")
+            .font(.caption2.weight(.medium)).foregroundStyle(.primary)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(MiuTheme.color(.me, moment: moment).opacity(0.14), in: Capsule())
+    }
+}
+
+struct WritingMomentPicker: View {
+    @Binding var selection: WritingMoment?
+    @Environment(\.dynamicTypeSize) private var typeSize
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("小暮暮，这篇是哪时写下的？").font(.caption).foregroundStyle(.secondary)
+            let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                ForEach(WritingMoment.allCases) { moment in
+                    Button { selection = moment } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: moment.symbol).foregroundStyle(MiuTheme.color(.me, moment: moment))
+                            Text(moment.label).foregroundStyle(.primary)
+                            if selection == moment { Image(systemName: "checkmark").font(.caption2.weight(.bold)).foregroundStyle(.primary) }
+                        }.font(.subheadline).frame(maxWidth: .infinity).frame(minHeight: 44)
+                            .background(MiuTheme.color(.me, moment: moment).opacity(selection == moment ? 0.18 : 0.06), in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(MiuTheme.color(.me, moment: moment).opacity(selection == moment ? 0.6 : 0.16), lineWidth: 1))
+                    }.buttonStyle(.plain).accessibilityAddTraits(selection == moment ? .isSelected : [])
+                }
+            }
+            if selection == nil { Text("选一种颜色再收藏；依据写下的时间，不是导入时间。").font(.caption2).foregroundStyle(.secondary) }
+        }
+    }
+}
+
+struct SealedDiaryPreview: View {
+    var message = "正文轻轻收好，等你翻开。"
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "envelope").font(.title3).foregroundStyle(MiuTheme.rose)
+                .frame(width: 42, height: 42).background(MiuTheme.rose.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+            Text(message).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }.accessibilityElement(children: .combine)
     }
 }
 

@@ -126,6 +126,13 @@ struct EditorView: View {
                     Picker("作者", selection: $draft.author) {
                         ForEach(DiaryAuthor.allCases) { Text($0.label).tag($0) }
                     }.pickerStyle(.segmented)
+                    if draft.author == .me {
+                        if focused {
+                            Button { focused = false } label: {
+                                HStack { WritingMomentBadge(moment: draft.writingMoment); Text("更改标记").font(.caption); Spacer() }
+                            }.buttonStyle(.plain).accessibilityLabel("更改当日写下或后来补写标记")
+                        } else { WritingMomentPicker(selection: $draft.writingMoment) }
+                    }
                     HStack {
                         Button { datePicker = true } label: { Label(MiuTheme.date(draft.day, template: "yyyy年 M月d日"), systemImage: "calendar") }
                         Spacer()
@@ -160,7 +167,7 @@ struct EditorView: View {
                             autosaveTask?.cancel()
                             do { try store.save(draft); committed = true; dismiss() }
                             catch { issue = AlertMessage(text: error.localizedDescription) }
-                        }.fontWeight(.semibold).disabled(draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }.fontWeight(.semibold).disabled(draft.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (draft.author == .me && draft.writingMoment == nil))
                     }
                     ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("收起键盘") { focused = false } }
                 }
@@ -226,6 +233,7 @@ struct ImportReviewView: View {
     @State private var author: DiaryAuthor
     @State private var day: String?
     @State private var title = ""
+    @State private var writingMoment: WritingMoment?
     @State private var bodyText = ""
     @State private var encoding = TextEncodingChoice.auto
     @State private var decodingIssue: String?
@@ -247,6 +255,7 @@ struct ImportReviewView: View {
                 Section {
                     Label(file.name, systemImage: "doc.text").font(.subheadline)
                     Picker("谁写的", selection: $author) { ForEach(DiaryAuthor.allCases) { Text($0.label).tag($0) } }
+                    if author == .me { WritingMomentPicker(selection: $writingMoment) }
                     Button { datePicker = true } label: {
                         HStack {
                             Text("存放日期").foregroundStyle(.primary)
@@ -261,7 +270,9 @@ struct ImportReviewView: View {
                 Section("文字预览") {
                     Picker("文件编码", selection: $encoding) { ForEach(TextEncodingChoice.allCases) { Text($0.label).tag($0) } }
                     if let decodingIssue { Text(decodingIssue).foregroundStyle(.orange) }
-                    else {
+                    else if author == .miu {
+                        SealedDiaryPreview(message: "文字已读好。收藏后，到这一天点开 Miu 的日记，再看全文。")
+                    } else {
                         Text(verbatim: String(bodyText.prefix(8000))).font(.system(size: 15)).lineSpacing(5).textSelection(.enabled)
                         if bodyText.count > 8000 { Text("预览显示前 8,000 字，保存时会保留全部文字。\n共 \(bodyText.count) 字").font(.caption).foregroundStyle(.secondary) }
                     }
@@ -275,7 +286,7 @@ struct ImportReviewView: View {
                         guard let day else { datePicker = true; return }
                         if DiaryRules.isDuplicate(body: bodyText, day: day, author: author, in: store.library) { duplicate = true }
                         else { save() }
-                    }.disabled(day == nil || bodyText.isEmpty || decodingIssue != nil)
+                    }.disabled(day == nil || bodyText.isEmpty || decodingIssue != nil || (author == .me && writingMoment == nil))
                 }
             }
         }
@@ -295,7 +306,8 @@ struct ImportReviewView: View {
     private func save() {
         guard let day else { return }
         do {
-            let draft = DiaryDraft(day: day, author: author, title: title, body: bodyText, source: .txt, originalFilename: file.name)
+            let draft = DiaryDraft(day: day, author: author, title: title, body: bodyText, source: .txt, originalFilename: file.name,
+                                   writingMoment: author == .me ? writingMoment : nil)
             try store.save(draft); dismiss()
         } catch { issue = AlertMessage(text: error.localizedDescription) }
     }
@@ -314,9 +326,12 @@ struct DraftsView: View {
                 ForEach(store.drafts) { draft in
                     Button { editing = draft } label: {
                         VStack(alignment: .leading, spacing: 8) {
-                            HStack { AuthorBadge(author: draft.author); Spacer(); Text(draft.day).font(.caption).foregroundStyle(.secondary) }
-                            Text(draft.title.isEmpty ? "还没起名字的一页" : draft.title).foregroundStyle(.primary)
-                            Text(String(draft.body.prefix(250))).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            HStack { AuthorBadge(author: draft.author, moment: draft.writingMoment); Spacer(); Text(draft.day).font(.caption).foregroundStyle(.secondary) }
+                            if draft.author == .miu { SealedDiaryPreview(message: "Miu 的草稿已收好，继续编辑时再展开。") }
+                            else {
+                                Text(draft.title.isEmpty ? "还没起名字的一页" : draft.title).foregroundStyle(.primary)
+                                Text(String(draft.body.prefix(250))).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
                         }.padding(.vertical, 6)
                     }.swipeActions { Button("删除", role: .destructive) { deleting = draft } }
                 }
