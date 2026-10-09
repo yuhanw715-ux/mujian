@@ -8,9 +8,12 @@ struct AddEntryView: View {
     @State private var editing: DiaryDraft?
     @State private var importing = false
     @State private var imported: ImportFile?
+    @State private var reading = false
+    @State private var handoff = ImportHandoff<ImportFile>()
+    @State private var readTask: Task<Void, Never>?
     @State private var issue: AlertMessage?
     var body: some View {
-        Group {
+        ZStack {
             if let editing { EditorView(initial: editing) }
             else if let imported { ImportReviewView(file: imported, suggestedDay: day, fallbackAuthor: author) }
             else {
@@ -26,8 +29,17 @@ struct AddEntryView: View {
                         }.pickerStyle(.segmented)
                         action("在这里写", subtitle: "慢慢写，没写完也会留下草稿。", symbol: "square.and.pencil") {
                             editing = DiaryDraft(day: day, author: author)
+                        }.disabled(reading)
+                        action("导入 TXT", subtitle: "一份文件，收藏成一篇日记。", symbol: "doc.badge.plus") {
+                            handoff.begin(); importing = true
+                        }.disabled(reading)
+                        if reading {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ProgressView("Miu 正在读取这份文字…")
+                                Text("稍后会打开预览，再由你确认收藏。").font(.footnote).foregroundStyle(.secondary)
+                                Button("取消读取") { cancelReading() }
+                            }.padding(.horizontal, 8)
                         }
-                        action("导入 TXT", subtitle: "一份文件，收藏成一篇日记。", symbol: "doc.badge.plus") { importing = true }
                         Spacer()
                         Text("所有文字和图片只保存在本机。")
                             .font(.footnote).foregroundStyle(.secondary).frame(maxWidth: .infinity)
@@ -38,14 +50,46 @@ struct AddEntryView: View {
             }
         }
         .presentationDetents([.large]).presentationDragIndicator(.visible)
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .text], allowsMultipleSelection: false) { result in
-            do {
-                guard let url = try result.get().first else { return }
-                guard url.pathExtension.lowercased() == "txt" else { throw DiaryFailure.message("请选一个 .txt 文件，Miu 会把它完整收藏成一篇。") }
-                imported = ImportFile(name: url.lastPathComponent, data: try LocalFiles.read(url, limit: DiaryRules.maxTextBytes))
-            } catch { issue = AlertMessage(text: error.localizedDescription) }
+        .sheet(isPresented: $importing, onDismiss: {
+            handoff.didDismissPicker()
+            finishImportIfReady()
+        }) {
+            TextDocumentPicker(selected: readSelection, cancelled: {
+                handoff.cancel(); importing = false
+            })
         }
+        .onDisappear { readTask?.cancel() }
         .alert(item: $issue) { item in Alert(title: Text("暂时没有导入"), message: Text(item.text), dismissButton: .default(Text("知道啦"))) }
+    }
+    private func readSelection(_ url: URL) {
+        guard let session = handoff.session else { importing = false; return }
+        reading = true
+        importing = false
+        readTask?.cancel()
+        readTask = Task { @MainActor in
+            let result = await Task.detached(priority: .userInitiated) {
+                Result {
+                    try TextImportRules.validateFilename(url.lastPathComponent)
+                    return ImportFile(name: url.lastPathComponent, data: try LocalFiles.read(url, limit: DiaryRules.maxTextBytes))
+                }
+            }.value
+            guard !Task.isCancelled else { return }
+            handoff.receive(result, for: session)
+            finishImportIfReady()
+        }
+    }
+    private func finishImportIfReady() {
+        guard let result = handoff.takeReadyResult() else { return }
+        reading = false
+        switch result {
+        case .success(let file): imported = file
+        case .failure(let error):
+            issue = AlertMessage(text: error.localizedDescription + "\n如果文件来自云盘，请先在系统‘文件’中确认它已下载，再重新选择。")
+        }
+    }
+    private func cancelReading() {
+        readTask?.cancel(); readTask = nil
+        handoff.cancel(); reading = false
     }
     private func action(_ title: String, subtitle: String, symbol: String, perform: @escaping () -> Void) -> some View {
         Button(action: perform) {

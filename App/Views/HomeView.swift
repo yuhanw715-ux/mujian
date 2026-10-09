@@ -6,7 +6,7 @@ struct HomeView: View {
     @EnvironmentObject private var store: DiaryStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.miuAccent) private var accent
-    @State private var month = DayKey.monthStart(Date())
+    @State private var calendarNavigation = CalendarNavigation()
     @State private var section = 0
     @State private var path: [DiaryRoute] = []
     @State private var settings = false
@@ -32,7 +32,7 @@ struct HomeView: View {
                             Spacer()
                             if !store.drafts.isEmpty { Button("草稿 \(store.drafts.count)") { drafts = true }.font(.caption) }
                         }.padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 5)
-                        VerticalCalendar(month: $month, namespace: navigation) { day in
+                        VerticalCalendar(navigation: $calendarNavigation) { day in
                             path.append(.day(day))
                         }
                     }
@@ -45,7 +45,7 @@ struct HomeView: View {
                     Button { monthPicker = true } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.down").font(.caption.weight(.semibold))
-                            Text(String(DayKey.calendar.component(.year, from: month)) + "年")
+                            Text(String(DayKey.calendar.component(.year, from: calendarNavigation.month)) + "年")
                         }
                     }.accessibilityLabel("选择年月")
                 }
@@ -60,8 +60,9 @@ struct HomeView: View {
             .navigationDestination(for: DiaryRoute.self) { route in
                 switch route {
                 case .day(let day):
+                    // Calendar cells contain transparent material. Native zoom snapshots can
+                    // leave an opaque tile behind on return; use normal push/pop for days.
                     DayView(day: day, namespace: navigation)
-                        .miuZoomDestination(day, in: navigation, enabled: !reduceMotion)
                 case .entry(let id):
                     ReaderView(entryID: id).miuZoomDestination(id, in: navigation, enabled: !reduceMotion)
                 }
@@ -69,7 +70,11 @@ struct HomeView: View {
         }
         .sheet(isPresented: $settings) { SettingsView() }
         .sheet(isPresented: $drafts) { DraftsView() }
-        .sheet(isPresented: $monthPicker) { MonthPickerView(month: $month) }
+        .sheet(isPresented: $monthPicker) {
+            MonthPickerView(month: calendarNavigation.month) { date in
+                calendarNavigation.go(to: date); section = 0
+            }
+        }
         .sheet(item: $newEntry) { AddEntryView(day: $0.day) }
         .alert("Miu 的小提示", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) {
             Button("知道啦", role: .cancel) { store.message = nil }
@@ -78,7 +83,7 @@ struct HomeView: View {
     private var bottomBar: some View {
         HStack(spacing: 3) {
             tab("今天", symbol: "sun.max", selected: false) {
-                withAnimation(MiuTheme.motion(reduceMotion)) { month = DayKey.monthStart(Date()); section = 0 }
+                calendarNavigation.go(to: Date()); section = 0
             }
             tab("月历", symbol: "calendar", selected: section == 0) { section = 0 }
             tab("日记", symbol: "book.closed", selected: section == 1) { section = 1 }
@@ -115,24 +120,32 @@ private struct MonthSnapBehavior: ScrollTargetBehavior {
 }
 
 struct VerticalCalendar: View {
-    @Binding var month: Date
-    let namespace: Namespace.ID
+    @Binding var navigation: CalendarNavigation
     let openDay: (String) -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var position: Int?
-    init(month: Binding<Date>, namespace: Namespace.ID, openDay: @escaping (String) -> Void) {
-        _month = month; self.namespace = namespace; self.openDay = openDay
-        _position = State(initialValue: MonthLayout.index(of: month.wrappedValue))
+    @State private var handledRequest: UUID
+    @State private var initialIndex: Int
+    @State private var hasCentered = false
+    init(navigation: Binding<CalendarNavigation>, openDay: @escaping (String) -> Void) {
+        _navigation = navigation; self.openDay = openDay
+        _position = State(initialValue: navigation.wrappedValue.visibleIndex)
+        _handledRequest = State(initialValue: navigation.wrappedValue.jump.id)
+        _initialIndex = State(initialValue: navigation.wrappedValue.visibleIndex)
+    }
+    private struct ScrollRequest: Equatable {
+        let id: UUID
+        let size: CGSize
     }
     var body: some View {
         GeometryReader { geometry in
             let peek: CGFloat = geometry.size.height > 500 ? min(108, geometry.size.height * 0.16) : geometry.size.height > 350 ? 22 : 8
             let pageHeight = max(160, geometry.size.height - peek * 2)
             let stride = pageHeight + 12
-            ScrollView(.vertical) {
+            ScrollViewReader { reader in
+              ScrollView(.vertical) {
                 LazyVStack(spacing: 12) {
                     ForEach(0..<MonthLayout.count, id: \.self) { index in
-                        MonthPage(index: index, height: pageHeight, viewportHeight: geometry.size.height, namespace: namespace, openDay: openDay)
+                        MonthPage(index: index, height: pageHeight, viewportHeight: geometry.size.height, openDay: openDay)
                             .frame(height: pageHeight).id(index)
                             .visualEffect { content, proxy in
                                 content.opacity(MonthLayout.opacity(distance: Double(proxy.frame(in: .named("monthViewport")).midY - geometry.size.height / 2), stride: Double(stride)))
@@ -144,41 +157,40 @@ struct VerticalCalendar: View {
                 .scrollTargetBehavior(MonthSnapBehavior(stride: stride))
                 .scrollPosition(id: $position, anchor: .center)
                 .onChange(of: position) { _, value in
-                    if let value, MonthLayout.index(of: month) != value { month = MonthLayout.date(at: value) }
+                    if let value { navigation.observe(value) }
                 }
-                .onChange(of: month) { _, value in
-                    let index = MonthLayout.index(of: value)
-                    if position != index { withAnimation(MiuTheme.motion(reduceMotion)) { position = index } }
+                .task(id: ScrollRequest(id: navigation.jump.id, size: geometry.size)) {
+                    // Capture the intended target before SwiftUI reports intermediate positions.
+                    let request = navigation.jump.id
+                    let index = !hasCentered && request == handledRequest ? initialIndex : navigation.target(after: handledRequest)
+                    await Task.yield()
+                    guard !Task.isCancelled, navigation.jump.id == request else { return }
+                    var transaction = Transaction(animation: nil)
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        // scrollTo also centers an already-visible month: assigning the same
+                        // scrollPosition ID alone does not trigger a new scroll.
+                        position = index
+                        reader.scrollTo(index, anchor: .center)
+                        navigation.observe(index)
+                        handledRequest = request
+                        hasCentered = true
+                    }
                 }
-                .onChange(of: geometry.size) { _, _ in
-                    // Re-center after orientation changes, keeping the complete selected month visible.
-                    let index = MonthLayout.index(of: month)
-                    position = nil
-                    Task { @MainActor in await Task.yield(); position = index }
-                }
-                .accessibilityAction(named: Text("上个月")) { month = MonthLayout.date(at: MonthLayout.index(of: month) - 1) }
-                .accessibilityAction(named: Text("下个月")) { month = MonthLayout.date(at: MonthLayout.index(of: month) + 1) }
+                .accessibilityAction(named: Text("上个月")) { navigation.go(to: MonthLayout.date(at: navigation.visibleIndex - 1)) }
+                .accessibilityAction(named: Text("下个月")) { navigation.go(to: MonthLayout.date(at: navigation.visibleIndex + 1)) }
+            }
         }
     }
 }
 
-private struct DayFramePreference: PreferenceKey {
-    static var defaultValue: [String: CGRect] = [:]
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue(), uniquingKeysWith: { _, next in next }) }
-}
-
 private struct MonthPage: View {
     @EnvironmentObject private var store: DiaryStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let index: Int
     let height: CGFloat
     let viewportHeight: CGFloat
-    let namespace: Namespace.ID
     let openDay: (String) -> Void
-    @State private var dayFrames: [String: CGRect] = [:]
-    @GestureState(resetTransaction: Transaction(animation: MiuTheme.motion(false))) private var magnification: CGFloat = 1
     private var month: Date { MonthLayout.date(at: index) }
-    private var coordinateName: String { "month-\(index)" }
     var body: some View {
         GeometryReader { page in
             let cells = DayKey.monthCells(month)
@@ -193,7 +205,7 @@ private struct MonthPage: View {
                     if !compact {
                         VStack(alignment: .trailing, spacing: 4) {
                             Text("上下翻阅").font(.caption2)
-                            Text("双指张开，走进某一天").font(.system(size: 9))
+                            Text("轻点日期，翻开这一天").font(.system(size: 9))
                         }.foregroundStyle(.secondary)
                     }
                 }.padding(.horizontal, 24).frame(height: headerHeight)
@@ -210,10 +222,7 @@ private struct MonthPage: View {
                                     Button { openDay(day) } label: {
                                         CalendarDayCell(day: day, entries: store.library.entries(on: day), rowHeight: rowHeight, weekend: col == 0 || col == 6)
                                             .frame(maxWidth: .infinity).frame(height: rowHeight, alignment: .top)
-                                    }.buttonStyle(.plain).miuZoomSource(day, in: namespace)
-                                        .background(GeometryReader { cell in
-                                            Color.clear.preference(key: DayFramePreference.self, value: [day: cell.frame(in: .named(coordinateName))])
-                                        })
+                                    }.buttonStyle(.plain)
                                 } else { Color.clear.frame(maxWidth: .infinity).frame(height: rowHeight) }
                             }
                         }.overlay(alignment: .top) { Rectangle().fill(Color.primary.opacity(0.075)).frame(height: 0.5).allowsHitTesting(false) }
@@ -223,18 +232,6 @@ private struct MonthPage: View {
                     }
                 }.padding(.horizontal, 12)
             }.frame(width: page.size.width, height: height, alignment: .top)
-                .coordinateSpace(name: coordinateName)
-                .onPreferenceChange(DayFramePreference.self) { if dayFrames != $0 { dayFrames = $0 } }
-                .scaleEffect(reduceMotion ? 1 : min(1.08, max(0.98, magnification)))
-                .simultaneousGesture(MagnifyGesture().updating($magnification) { value, state, _ in state = value.magnification }
-                    .onEnded { value in
-                        guard value.magnification >= 1.18 else { return }
-                        let point = CGPoint(x: value.startAnchor.x * page.size.width, y: value.startAnchor.y * height)
-                        let closest = dayFrames.min { a, b in
-                            hypot(a.value.midX - point.x, a.value.midY - point.y) < hypot(b.value.midX - point.x, b.value.midY - point.y)
-                        }
-                        if let closest { openDay(closest.key) }
-                    })
         }
     }
 }
@@ -296,10 +293,12 @@ private struct CalendarDayCell: View {
 }
 
 struct MonthPickerView: View {
-    @Binding var month: Date
     @Environment(\.dismiss) private var dismiss
     @State private var chosen: Date
-    init(month: Binding<Date>) { _month = month; _chosen = State(initialValue: month.wrappedValue) }
+    let selected: (Date) -> Void
+    init(month: Date, selected: @escaping (Date) -> Void) {
+        _chosen = State(initialValue: month); self.selected = selected
+    }
     var body: some View {
         NavigationStack {
             DatePickerDecoration(day: DayKey.make(chosen)) {
@@ -309,7 +308,7 @@ struct MonthPickerView: View {
             }.navigationTitle("翻到哪一页？").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
-                    ToolbarItem(placement: .confirmationAction) { Button("前往") { month = DayKey.monthStart(chosen); dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) { Button("前往") { selected(DayKey.monthStart(chosen)); dismiss() } }
                 }
         }.presentationDetents([.large])
     }

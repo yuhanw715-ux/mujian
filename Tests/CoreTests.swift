@@ -19,6 +19,8 @@ enum CoreTests {
         try diaryTests()
         try backupTests()
         try appearanceTests()
+        try navigationTests()
+        try importTests()
         print("PASS: \(checks) diary/date/TXT/backup checks. Only synthetic test text was used.")
     }
 
@@ -180,5 +182,87 @@ enum CoreTests {
         try check(MonthLayout.snappedOffset(980, stride: 100, maximum: 900) == 900, "Snap clamps after last month")
         try check(MonthLayout.opacity(distance: 0, stride: 100) == 1, "Centered month is fully opaque")
         try check(abs(MonthLayout.opacity(distance: 200, stride: 100) - 0.22) < 0.001, "Adjacent month never becomes invisible")
+    }
+
+    static func navigationTests() throws {
+        let october = DayKey.date("2026-10-09")!
+        let december = DayKey.date("2026-12-20")!
+        var navigation = CalendarNavigation(date: october)
+        let initialRequest = navigation.jump.id
+        navigation.go(to: october)
+        let firstToday = navigation.jump.id
+        try check(firstToday != initialRequest, "Today requests centering even in the same month")
+        navigation.go(to: october)
+        try check(navigation.jump.id != firstToday, "Repeated Today taps always issue a new request")
+        navigation.observe(MonthLayout.index(of: december))
+        try check(navigation.target(after: firstToday) == MonthLayout.index(of: october), "Intermediate scroll observations cannot redirect a pending Today jump")
+        let applied = navigation.jump.id
+        try check(navigation.target(after: applied) == MonthLayout.index(of: december), "After a jump is handled, relayout restores the browsed month")
+        try check(navigation.jump.id == applied, "Scroll feedback does not create navigation commands")
+        navigation.go(to: DayKey.date("2035-04-10")!)
+        navigation.go(to: october)
+        try check(navigation.target(after: applied) == MonthLayout.index(of: october), "Latest jump wins after a distant date selection")
+        try check(navigation.visibleIndex == navigation.jump.monthIndex, "Today initializes the calendar correctly when returning from diary tab")
+        navigation.go(to: DayKey.date("2026-11-01")!)
+        try check(DayKey.make(navigation.month) == "2026-11-01", "Today uses the newly supplied date after a month boundary")
+        navigation.observe(-1)
+        try check(navigation.visibleIndex == 0, "Observed month clamps to first supported month")
+        navigation.observe(MonthLayout.count)
+        try check(navigation.visibleIndex == MonthLayout.count - 1, "Observed month clamps to last supported month")
+    }
+
+    static func importTests() throws {
+        var handoff = ImportHandoff<String>()
+        handoff.begin()
+        let fastSession = handoff.session!
+        handoff.receive(.success("synthetic fast file"), for: fastSession)
+        try check(handoff.takeReadyResult() == nil, "Fast file must wait until picker dismissal before preview")
+        handoff.didDismissPicker()
+        try check(try handoff.takeReadyResult()?.get() == "synthetic fast file", "Picker dismissal releases a ready preview")
+        try check(handoff.takeReadyResult() == nil, "Import preview delivered exactly once")
+        handoff.begin()
+        let slowSession = handoff.session!
+        handoff.didDismissPicker()
+        try check(handoff.takeReadyResult() == nil, "Slow provider can finish after the picker closes")
+        handoff.receive(.success("synthetic cloud file"), for: slowSession)
+        try check(try handoff.takeReadyResult()?.get() == "synthetic cloud file", "Late provider result opens preview after dismissal")
+        handoff.begin()
+        let cancelledSession = handoff.session!
+        handoff.cancel()
+        handoff.receive(.success("cancelled"), for: cancelledSession)
+        try check(handoff.takeReadyResult() == nil, "Cancel prevents a late callback from opening preview")
+        handoff.begin()
+        let retrySession = handoff.session!
+        handoff.receive(.success("stale"), for: cancelledSession)
+        handoff.didDismissPicker()
+        try check(handoff.takeReadyResult() == nil, "Previous selection cannot replace a retry")
+        handoff.receive(.failure(DiaryFailure.message("synthetic read failure")), for: retrySession)
+        let failure = handoff.takeReadyResult()
+        try check(failure != nil, "Read error is delivered rather than silently ignored")
+        try rejects("Read failure remains actionable") { _ = try failure!.get() }
+        handoff.begin(); handoff.didDismissPicker()
+        try check(handoff.takeReadyResult() == nil, "Dismissing picker with no file adds nothing")
+
+        try TextImportRules.validateFilename("2026-10-09_Miu.TXT")
+        try check(true, "Uppercase Windows TXT extension is accepted")
+        try rejects("Renamed extension cannot bypass TXT selection") { try TextImportRules.validateFilename("diary.txt.pdf") }
+        try rejects("Extensionless files require an explicit TXT filename") { try TextImportRules.validateFilename("diary") }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("2026-10-09_测试.TXT")
+        let text = Data("虚构的导入测试。\r\n\r\n保留空行与猫爪 🐾".utf8)
+        try text.write(to: url)
+        try check(try BoundedFileReader.read(url, limit: text.count) == text, "Read exact byte limit without truncation")
+        let imported = try BoundedFileReader.read(url, limit: 1024)
+        try check(try DiaryRules.decodeText(imported) == "虚构的导入测试。\n\n保留空行与猫爪 🐾", "File-to-decoder import retains paragraphs and emoji")
+        try rejects("Read refuses files over byte limit") { _ = try BoundedFileReader.read(url, limit: text.count - 1) }
+        try rejects("Read refuses a directory") { _ = try BoundedFileReader.read(directory, limit: 1024) }
+        try rejects("Missing file produces a read error") { _ = try BoundedFileReader.read(directory.appendingPathComponent("missing.txt"), limit: 1024) }
+        try Data().write(to: url)
+        try rejects("Empty imported file fails text validation") { _ = try DiaryRules.decodeText(BoundedFileReader.read(url, limit: 1024)) }
+        let manyChunks = Data(repeating: 65, count: 140_000)
+        try manyChunks.write(to: url)
+        try check(try BoundedFileReader.read(url, limit: manyChunks.count) == manyChunks, "Chunked reads retain the complete file")
     }
 }

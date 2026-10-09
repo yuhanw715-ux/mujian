@@ -67,7 +67,7 @@ struct SettingsView: View {
                 Section {
                     Text("“Miu写的”是日记分类，用来收藏 Miu 的文字；暮笺不会自动生成日记，也不会上传内容。")
                         .font(.footnote).foregroundStyle(.secondary)
-                    HStack { Text("版本"); Spacer(); Text("1.1.0").foregroundStyle(.secondary) }
+                    HStack { Text("版本"); Spacer(); Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.1.1").foregroundStyle(.secondary) }
                 }
             }.navigationTitle("暮笺的小设置").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }

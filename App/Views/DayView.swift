@@ -66,7 +66,6 @@ struct DayView: View {
                                 .accessibilityLabel("返回月历").accessibilityAddTraits(.isButton)
                         }
                 }
-                .simultaneousGesture(MagnifyGesture().onEnded { if $0.magnification <= 0.82 { dismiss() } })
             }
         }
         .navigationTitle("这一天").navigationBarTitleDisplayMode(.inline)

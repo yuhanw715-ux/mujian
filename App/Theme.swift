@@ -84,16 +84,18 @@ enum LocalFiles {
     static func read(_ url: URL, limit: Int) throws -> Data {
         let access = url.startAccessingSecurityScopedResource()
         defer { if access { url.stopAccessingSecurityScopedResource() } }
-        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        guard size <= limit else { throw DiaryFailure.message("这个文件太大了，请选择较小的文件。") }
-        let data = try Data(contentsOf: url)
-        guard data.count <= limit else { throw DiaryFailure.message("这个文件太大了，请选择较小的文件。") }
-        return data
+        var coordinationError: NSError?
+        var readResult: Result<Data, Error>?
+        NSFileCoordinator(filePresenter: nil).coordinate(readingItemAt: url, options: [], error: &coordinationError) { readableURL in
+            readResult = Result { try BoundedFileReader.read(readableURL, limit: limit) }
+        }
+        if let coordinationError { throw coordinationError }
+        guard let readResult else { throw DiaryFailure.message("文件还没有准备好，请在‘文件’中下载后再试一次。") }
+        return try readResult.get()
     }
 }
 
 struct AlertMessage: Identifiable { let id = UUID(); let text: String }
-struct ImportFile: Identifiable { let id = UUID(); let name: String; let data: Data }
 struct NewEntryContext: Identifiable { let id = UUID(); var day: String }
 
 extension View {

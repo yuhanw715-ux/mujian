@@ -18,7 +18,7 @@ if [[ "$branch" != main ]]; then
 fi
 git add App Tests scripts docs project.yml README.md THIRD-PARTY.md .github .gitignore .gitattributes
 if ! git diff --cached --quiet; then
-  git commit -m 'Mujian 1.1: themes, calendar gestures and image layers'
+  git commit -m 'Mujian 1.1.1: fix TXT import, Today navigation and day transitions'
 fi
 git push origin main
 echo '更新已上传。打开原来的暮笺仓库 → Actions → Build iOS IPA → Run workflow。'
